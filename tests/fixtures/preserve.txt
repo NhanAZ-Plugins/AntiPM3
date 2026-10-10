@@ -1,0 +1,1 @@
+This fixture must remain unchanged when the retired plugin is called.

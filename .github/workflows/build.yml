@@ -1,0 +1,128 @@
+name: Build and validate retired AntiPM3 stub
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  safe-stub-test:
+    name: Test the non-destructive retired behavior
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out AntiPM3 source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Set up PHP 8.4 for Axolotl-PM
+        uses: axolotl-pm/setup-php-action@b8c3f9add4f2ad4a5e2624a1112aba899ee8db0e
+        with:
+          php-version: '8.4'
+          pm-version-major: '5'
+
+      - name: Lint source and run the no-deletion fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          php -l src/AntiPM3/Main.php
+          php -l tests/no-deletion.php
+          php tests/no-deletion.php
+
+  build:
+    name: Build and analyze against API ${{ matrix.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: 5.0.0
+            ref: b16cc69974d4e805d21e6328ab77c0e17cd7116d
+          - label: 5.49.1
+            ref: dfe0d07e48a9e8d5a4a242fa43ff1cd3b743a955
+    uses: NhanAZ/DevTools/.github/workflows/build-plugin.yml@8d13a75aaf4f330fdbd93737d58be9cacc41e262
+    with:
+      php-version: '8.4'
+      pm-version-major: '5'
+      phpstan: max
+      axolotl-ref: ${{ matrix.ref }}
+      phpstan-paths: src
+      artifact-name: antipm3-api-${{ matrix.label }}-${{ github.sha }}
+      retention-days: 14
+
+  runtime-smoke:
+    name: Smoke-test the retired stub on Axolotl-PM 5.49.1
+    needs: [safe-stub-test, build]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Set up PHP 8.4 for Axolotl-PM
+        uses: axolotl-pm/setup-php-action@b8c3f9add4f2ad4a5e2624a1112aba899ee8db0e
+        with:
+          php-version: '8.4'
+          pm-version-major: '5'
+
+      - name: Download the API 5.49.1 PHAR built by this run
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: antipm3-api-5.49.1-${{ github.sha }}
+          path: ${{ runner.temp }}/antipm3-artifact
+
+      - name: Download and verify the official Axolotl-PM server PHAR
+        shell: bash
+        env:
+          SERVER_SHA256: b62ce263c079a00498a49cd3eab0bfa454f4ba195e5f9d62e32927cfc805c665
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/antipm3-runtime"
+          curl --fail --location --silent --show-error \
+            https://github.com/axolotl-pm/PocketMine-MP/releases/download/5.49.1/PocketMine-MP.phar \
+            --output "$RUNNER_TEMP/antipm3-runtime/PocketMine-MP.phar"
+          printf '%s  %s\n' "$SERVER_SHA256" "$RUNNER_TEMP/antipm3-runtime/PocketMine-MP.phar" | sha256sum --check --status
+
+      - name: Verify plugin enablement and clean shutdown
+        shell: bash
+        run: |
+          set -euo pipefail
+          runtime="$RUNNER_TEMP/antipm3-runtime"
+          mkdir -p "$runtime/data/plugins"
+          cp "$RUNNER_TEMP/antipm3-artifact/AntiPM3.phar" "$runtime/data/plugins/AntiPM3.phar"
+          php "$runtime/PocketMine-MP.phar" --no-wizard --disable-ansi \
+            --data="$runtime/data" --plugins="$runtime/data/plugins" > "$runtime/server.log" 2>&1 &
+          server_pid=$!
+          ready=0
+          for _ in $(seq 1 90); do
+            if grep -Fq 'Enabling AntiPM3 v2.0.0' "$runtime/server.log"; then
+              ready=1
+            fi
+            if grep -Fq 'Done (' "$runtime/server.log"; then
+              break
+            fi
+            if ! kill -0 "$server_pid" 2>/dev/null; then
+              cat "$runtime/server.log"
+              exit 1
+            fi
+            sleep 1
+          done
+          if [ "$ready" -ne 1 ] || ! grep -Fq 'Done (' "$runtime/server.log"; then
+            cat "$runtime/server.log"
+            kill -INT "$server_pid" 2>/dev/null || true
+            wait "$server_pid" || true
+            exit 1
+          fi
+          kill -INT "$server_pid"
+          for _ in $(seq 1 30); do
+            if ! kill -0 "$server_pid" 2>/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          if kill -0 "$server_pid" 2>/dev/null; then
+            kill "$server_pid"
+            cat "$runtime/server.log"
+            exit 1
+          fi
+          wait "$server_pid"
+          ! grep -E '\[(ERROR|CRITICAL)\]' "$runtime/server.log"
+          cat "$runtime/server.log"

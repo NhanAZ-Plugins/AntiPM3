@@ -1,9 +1,22 @@
 # AntiPM3
 
-**Retired legacy plugin. Do not install it on a production server.** AntiPM3 targets PocketMine-MP API 3.0.0 and is not compatible with Axolotl-PM 5.x.
+AntiPM3 is a retired, non-destructive compatibility stub. The original API 3 behavior has been disabled because earlier revisions recursively deleted server data. This API 5 update preserves the safe no-op behavior. It does not detect or block legacy plugins.
 
-Earlier source revisions recursively deleted server directories, including worlds, player data, resource packs and plugins, when enabled on PocketMine-MP 3. The current source has disabled that behavior. The `antiPM3()` method now returns `false` without changing files. Existing copies built from earlier commits remain dangerous; updating this repository does not change PHARs already installed on a server.
+## Compatibility
 
-No Axolotl-PM 5 build or stable release is provided. If you find an earlier AntiPM3 PHAR on a server, stop the server, preserve its data and remove the PHAR before restarting.
+- Axolotl-PM API minimum: `5.0.0`.
+- CI builds and runs PHPStan at maximum level against pinned API 5.0.0 and 5.49.1 source revisions.
+- The generated PHAR is smoke-tested on the official Axolotl-PM 5.49.1 server release.
+- The check proves that the retired plugin loads without performing its former deletion behavior. It does not verify the original API 3 feature, which is intentionally disabled.
+
+Do not install older AntiPM3 PHAR files. The repository update does not change PHARs already installed on a server. If an older copy is present, stop the server, preserve its data and remove the PHAR before restarting.
+
+## Build
+
+The GitHub Actions workflow uses the [DevTools](https://github.com/NhanAZ/DevTools) reusable workflow to run PHPStan at maximum level, build and inspect the PHAR, and smoke-test the verified artifact.
+
+## License
 
 The existing [MIT license](LICENSE) and original commit history remain available for reference.
+
+For help with the NhanAZ ecosystem, visit [NhanAZ Discord](https://discord.gg/j2X83ujT6c).
